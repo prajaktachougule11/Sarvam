@@ -8,17 +8,113 @@ import {
   HelpCircle, 
   Check, 
   Copy,
-  RotateCcw
+  RotateCcw,
+  Lightbulb
 } from 'lucide-react';
 import { ChatMessage } from '../../types';
 import { askPuneConcierge } from '../../services/aiService';
+
+// Lightweight, crisp markdown parser for chat bubbles
+const FormattedMessage: React.FC<{ content: string }> = ({ content }) => {
+  const lines = content.split('\n');
+
+  return (
+    <div className="space-y-1.5 text-xs sm:text-sm leading-relaxed">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+          return <div key={idx} className="h-1" />;
+        }
+
+        // Headings (e.g. ### Heading)
+        if (trimmed.startsWith('### ')) {
+          return (
+            <h4 key={idx} className="font-extrabold text-slate-900 text-sm sm:text-base mt-3 mb-1 border-b border-orange-100 pb-1 flex items-center gap-1.5">
+              <span>{renderInlineFormatting(trimmed.replace('### ', ''))}</span>
+            </h4>
+          );
+        }
+
+        // Subheadings or Section Titles (e.g. ## Title)
+        if (trimmed.startsWith('## ')) {
+          return (
+            <h3 key={idx} className="font-extrabold text-orange-900 text-sm sm:text-base mt-3 mb-1">
+              {renderInlineFormatting(trimmed.replace('## ', ''))}
+            </h3>
+          );
+        }
+
+        // Pro-tip callout box (e.g. 💡 Pro-Tip:)
+        if (trimmed.startsWith('💡')) {
+          return (
+            <div key={idx} className="p-3 my-2 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-950 text-xs flex items-start gap-2 shadow-xs">
+              <Lightbulb className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>{renderInlineFormatting(trimmed.replace('💡', '').trim())}</div>
+            </div>
+          );
+        }
+
+        // Bullet point (e.g. * or •)
+        if (trimmed.startsWith('* ') || trimmed.startsWith('• ') || trimmed.startsWith('- ')) {
+          const bulletText = trimmed.replace(/^(\*|•|-)\s+/, '');
+          return (
+            <div key={idx} className="flex items-start gap-2 pl-1 py-0.5">
+              <span className="text-orange-500 font-bold shrink-0 mt-0.5">•</span>
+              <div className="flex-1">{renderInlineFormatting(bulletText)}</div>
+            </div>
+          );
+        }
+
+        // Standard paragraph
+        return (
+          <p key={idx} className="text-slate-800">
+            {renderInlineFormatting(line)}
+          </p>
+        );
+      })}
+    </div>
+  );
+};
+
+// Helper for inline **bold** and *italic*
+function renderInlineFormatting(text: string): React.ReactNode {
+  // Regex splitting by **bold** markers
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={i} className="font-bold text-slate-950">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    // Handle *italic* inside standard text
+    const italicParts = part.split(/(\*.*?\*)/g);
+    return (
+      <span key={i}>
+        {italicParts.map((subPart, j) => {
+          if (subPart.startsWith('*') && subPart.endsWith('*') && !subPart.startsWith('**')) {
+            return (
+              <em key={j} className="italic text-slate-700">
+                {subPart.slice(1, -1)}
+              </em>
+            );
+          }
+          return subPart;
+        })}
+      </span>
+    );
+  });
+}
 
 export const AiConcierge: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome-1',
       role: 'assistant',
-      content: `Namaskar! 🚩 I am your **Pune AI Concierge** on Explore AI.\n\nI can help you with:\n• Finding hidden gems & authentic Puneri eateries (Bedekar Misal, Sujata Mastani)\n• Connecting you with 350-year-old artisan workshops in Tambat Ali & Tulshibaug\n• Explaining local customs like the 1:00 PM – 4:00 PM afternoon break\n• Pune Metro navigation and auto fare guidance\n\nWhat would you like to explore today?`,
+      content: `Namaskar! 🚩 I am your **Pune AI Concierge** on Explore AI.\n\nI can help you with:\n• **Romantic Date & Western Veg Cuisine:** Sante Spa Cuisine KP, World of Veg rooftop, Le Plaisir, Little Italy, Terttulia.\n• **Authentic Food & Misal:** Bedekar Misal, Cafe Goodluck 1935 Bun Maska, Sujata Mango Mastani, Vaishali SPDP.\n• **Heritage & Forts:** Shaniwar Wada, Aga Khan Palace, Sinhagad trek with woodfire Pithla Bhakri.\n• **Support Local Artisans:** 350-year-old Tambat Ali coppersmiths, Tulshibaug brass, Laxmi Road Paithani sarees.\n• **Pune Customs & Logistics:** The 1 to 4 PM Puneri Siesta, Pune Metro routes, and auto-rickshaw fares.\n\nWhat would you like to explore today?`,
       timestamp: 'Just now'
     }
   ]);
@@ -34,7 +130,7 @@ export const AiConcierge: React.FC = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, loading]);
 
   const handleSend = async (textToSend?: string) => {
     const question = (textToSend || input).trim();
@@ -61,10 +157,11 @@ export const AiConcierge: React.FC = () => {
       };
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (err) {
+      const fallbackReply = `Namaskar! Pune has wonderful spots. For dining, check Sante Spa Cuisine in KP or World of Veg in Shivajinagar. For heritage, visit Shaniwar Wada and Tambat Ali coppersmiths!`;
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         role: 'assistant',
-        content: `Apologies, I encountered a brief network delay. Pune's iconic spots are always open! Try asking about Shaniwar Wada, Misal spots, or Tambat Ali copper artisans.`,
+        content: fallbackReply,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages((prev) => [...prev, errorMsg]);
@@ -84,22 +181,24 @@ export const AiConcierge: React.FC = () => {
       {
         id: 'welcome-reset',
         role: 'assistant',
-        content: `Namaskar! How may I assist your Pune travel plans?`,
+        content: `Namaskar! How may I assist your Pune travel plans? Ask about date spots, food, forts, artisans, or metro directions!`,
         timestamp: 'Just now'
       }
     ]);
   };
 
   const suggestedQuestions = [
-    'What is the 1 to 4 PM Pune siesta?',
-    'Where to find authentic Bakarwadi & Shrewsbury biscuits?',
-    'How do I visit the 350-year-old copper artisans?',
-    'How do I plan a trek to Sinhagad Fort?',
-    'Best breakfast places on FC Road & Deccan?'
+    'Romantic date with Western veg cuisine in Pune 🍷',
+    'Where to eat the best authentic Puneri Misal? 🍲',
+    'What is the 1 to 4 PM Pune siesta? 😴',
+    'How do I visit the 350-year-old copper artisans? 🔨',
+    'Sinhagad Fort trek & Pithla Bhakri tips 🏰',
+    'Pune Metro routes & timings 🚆',
+    'Where to buy authentic Paithani sarees? 🛍️'
   ];
 
   return (
-    <div className="bg-white rounded-3xl border border-orange-100 shadow-xl overflow-hidden flex flex-col h-[650px] max-w-4xl mx-auto">
+    <div className="bg-white rounded-3xl border border-orange-100 shadow-xl overflow-hidden flex flex-col h-[700px] max-w-4xl mx-auto">
       {/* Concierge Header */}
       <div className="bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 px-6 py-4 text-white flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3">
@@ -111,7 +210,7 @@ export const AiConcierge: React.FC = () => {
               <h3 className="font-extrabold text-base leading-tight">Explore AI Pune Concierge</h3>
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             </div>
-            <p className="text-xs text-orange-100">Live AI Assistant for Pune Tourism & Local MSMEs</p>
+            <p className="text-xs text-orange-100">Live AI Expert for Pune Tourism, Dining & Local MSMEs</p>
           </div>
         </div>
 
@@ -134,7 +233,7 @@ export const AiConcierge: React.FC = () => {
           <button
             key={idx}
             onClick={() => handleSend(q)}
-            className="px-2.5 py-1 rounded-lg bg-white hover:bg-orange-100 border border-orange-200/80 text-[11px] text-slate-700 font-medium whitespace-nowrap transition-colors shrink-0 shadow-xs"
+            className="px-3 py-1.5 rounded-xl bg-white hover:bg-orange-100 border border-orange-200/80 text-[11px] text-slate-800 font-semibold whitespace-nowrap transition-colors shrink-0 shadow-xs"
           >
             {q}
           </button>
@@ -151,26 +250,30 @@ export const AiConcierge: React.FC = () => {
             }`}
           >
             <div
-              className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-xs font-bold ${
+              className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 text-xs font-bold shadow-xs ${
                 msg.role === 'user'
-                  ? 'bg-slate-800 text-white'
-                  : 'bg-orange-500 text-white shadow-xs'
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-gradient-to-tr from-orange-500 to-amber-500 text-white'
               }`}
             >
               {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
             </div>
 
             <div
-              className={`max-w-[80%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed space-y-2 relative group ${
+              className={`max-w-[85%] rounded-3xl p-4 sm:p-5 shadow-xs relative group ${
                 msg.role === 'user'
                   ? 'bg-slate-900 text-white rounded-tr-none'
-                  : 'bg-white text-slate-800 border border-slate-200/80 shadow-xs rounded-tl-none'
+                  : 'bg-white text-slate-800 border border-slate-200/90 shadow-sm rounded-tl-none'
               }`}
             >
-              <div className="whitespace-pre-line">{msg.content}</div>
+              {msg.role === 'user' ? (
+                <p className="text-xs sm:text-sm font-medium leading-relaxed">{msg.content}</p>
+              ) : (
+                <FormattedMessage content={msg.content} />
+              )}
 
               <div
-                className={`flex items-center justify-between text-[10px] pt-1 border-t ${
+                className={`flex items-center justify-between text-[10px] pt-2 mt-2 border-t ${
                   msg.role === 'user' ? 'border-slate-800 text-slate-400' : 'border-slate-100 text-slate-400'
                 }`}
               >
@@ -197,14 +300,16 @@ export const AiConcierge: React.FC = () => {
 
         {loading && (
           <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-xl bg-orange-500 text-white flex items-center justify-center text-xs">
+            <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-orange-500 to-amber-500 text-white flex items-center justify-center text-xs shadow-xs">
               <Bot className="w-4 h-4" />
             </div>
-            <div className="bg-white rounded-2xl p-4 border border-slate-200 text-xs text-slate-500 flex items-center gap-2 shadow-xs">
-              <div className="w-2 h-2 rounded-full bg-orange-500 animate-bounce"></div>
-              <div className="w-2 h-2 rounded-full bg-amber-500 animate-bounce [animation-delay:0.2s]"></div>
-              <div className="w-2 h-2 rounded-full bg-yellow-500 animate-bounce [animation-delay:0.4s]"></div>
-              <span className="font-medium text-slate-600">Pune AI is thinking...</span>
+            <div className="bg-white rounded-2xl p-4 border border-slate-200 text-xs text-slate-600 flex items-center gap-2.5 shadow-sm">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-bounce"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-bounce [animation-delay:0.2s]"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-bounce [animation-delay:0.4s]"></span>
+              </div>
+              <span className="font-semibold text-slate-700">Pune AI is curating the best recommendations...</span>
             </div>
           </div>
         )}
@@ -223,15 +328,16 @@ export const AiConcierge: React.FC = () => {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask anything about Pune attractions, food spots, Marathi words, or local artisans..."
+          placeholder="Ask anything (e.g. 'plan a date with Western veg food', 'best misal', 'copper shops', 'sinhagad fort')..."
           className="flex-1 px-4 py-3 text-xs sm:text-sm rounded-2xl border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-orange-500 placeholder:text-slate-400"
         />
         <button
           type="submit"
           disabled={!input.trim() || loading}
-          className="p-3 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-50 transition-colors shadow-sm"
+          className="px-4 py-3 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white disabled:opacity-50 transition-colors shadow-sm flex items-center gap-1.5 font-bold text-xs"
         >
           <Send className="w-4 h-4" />
+          <span className="hidden sm:inline">Ask</span>
         </button>
       </form>
     </div>

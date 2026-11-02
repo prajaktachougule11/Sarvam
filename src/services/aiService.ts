@@ -2,6 +2,7 @@ import { ItineraryPlan, ItineraryDay, ItineraryStop, UserPreferences, ChatMessag
 import { PUNE_SPOTS } from '../data/puneSpots';
 import { PUNE_BUSINESSES } from '../data/puneBusinesses';
 import { calculateDistanceKm, estimateTravelTimeMinutes } from './routingService';
+import { searchPuneKnowledgeBase } from './puneKnowledgeBase';
 
 // Default key provided for Explore AI Pune platform
 const FALLBACK_TOKEN = atob('c2tfY3pocnYyZGdfREdBUXR3N2ExbDA2c0tvU29hTFl2dXpY');
@@ -260,24 +261,59 @@ export function generateCuratedFallbackItinerary(prefs: UserPreferences): Itiner
 
 /**
  * AI Concierge Chatbot helper for on-the-go tourist questions
+ * Multi-tier engine: Pollinations Cloud LLM -> Fast Public Gateway -> Deep Pune Knowledge Engine
  */
 export async function askPuneConcierge(userQuestion: string, history: ChatMessage[] = []): Promise<string> {
   const apiKey = getApiKey();
 
   const systemContext = `You are the friendly "Pune AI Concierge" on Explore AI.
-You help tourists with:
-- What to see and eat in Pune (Shaniwar Wada, Aga Khan Palace, Sinhagad Fort, Bedekar Misal, Sujata Mastani, Kayani Shrewsbury, Cafe Goodluck).
-- Helping them find and support authentic local businesses and coppersmiths (Tambat Ali).
-- Pune local culture: the 1:00 PM – 4:00 PM afternoon break ("Puneri Siesta"), Pune Metro routes, and fair auto-rickshaw tips.
-- Marathi phrases and polite local etiquette.
-Keep answers concise, warm, practical, and culturally authentic. Use bullet points where appropriate.`;
+You are an expert encyclopedia of Pune (Maharashtra, India).
+Answer tourist questions with deep accuracy and rich local color:
+- Romantic date spots with Western/Italian vegetarian cuisine (Sante Spa Cuisine in Koregaon Park, World of Veg rooftop in Shivajinagar, Le Plaisir on Prabhat Rd, Little Italy, Terttulia).
+- Authentic street food & misal hubs (Bedekar bread misal, KataKirr, Cafe Goodluck 1935 bun maska, Sujata Mango Mastani, Vaishali SPDP).
+- 350-year-old artisan quarters (Tambat Ali coppersmiths, Tulshibaug brass, Laxmi Road pure silk Paithani sarees).
+- Maratha history & hill forts (Sinhagad with hot Pithla Bhakri & Matka Dahi, Shaniwar Wada, Aga Khan Palace, Pataleshwar monolithic caves).
+- Local culture: the 1:00 PM – 4:00 PM Puneri Siesta, "Puneri Patya", Pune Metro lines (Aqua & Purple), and auto-rickshaw fares.
+Format answers cleanly with clear headings, bold text, and bullet points.`;
 
+  // 1. Try public text.pollinations.ai with an 8-second timeout controller
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
     const messages = [
       { role: 'system', content: systemContext },
-      ...history.slice(-4).map(m => ({ role: m.role, content: m.content })),
+      ...history.slice(-3).map(m => ({ role: m.role, content: m.content })),
       { role: 'user', content: userQuestion }
     ];
+
+    const response = await fetch('https://text.pollinations.ai/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages,
+        model: 'openai',
+        seed: Math.floor(Math.random() * 100000)
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const text = await response.text();
+      if (text && text.trim().length > 30 && !text.includes('"error"') && !text.includes('<!DOCTYPE')) {
+        return text.trim();
+      }
+    }
+  } catch (err) {
+    // Network latency or timeout, fall through to knowledge base
+  }
+
+  // 2. Also try gen.pollinations.ai if key exists
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     const response = await fetch(`${POLLINATIONS_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -287,37 +323,29 @@ Keep answers concise, warm, practical, and culturally authentic. Use bullet poin
       },
       body: JSON.stringify({
         model: 'openai/gpt-5.4-nano',
-        messages,
+        messages: [
+          { role: 'system', content: systemContext },
+          { role: 'user', content: userQuestion }
+        ],
         temperature: 0.7,
-        max_tokens: 600
-      })
+        max_tokens: 700
+      }),
+      signal: controller.signal
     });
 
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content;
+      if (content && content.trim().length > 30) {
+        return content.trim();
+      }
     }
-
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || 'Pune welcomes you! Please ask me any question about attractions, food, or local shops.';
   } catch (err) {
-    // Intelligent local fallback response
-    return getLocalConciergeAnswer(userQuestion);
+    // Fall through to knowledge engine
   }
-}
 
-function getLocalConciergeAnswer(q: string): string {
-  const lower = q.toLowerCase();
-  if (lower.includes('misal') || lower.includes('food') || lower.includes('eat')) {
-    return `🍲 **Top Puneri Food Spots:**\n• **Bedekar Misal (Narayan Peth):** Famous for authentic sweet-tangy misal with bread slices & solkadhi.\n• **Cafe Goodluck (Deccan):** 1935 Irani cafe for Bun Maska and Irani Chai.\n• **Sujata Mastani (Sadashiv Peth):** Pune's royal thick mango ice cream milkshake.\n• **Vaishali (FC Road):** SPDP (Sev Potato Dahi Puri) and Mysore Masala Dosa.`;
-  }
-  if (lower.includes('afternoon') || lower.includes('1 to 4') || lower.includes('siesta') || lower.includes('timing')) {
-    return `😴 **The Famous Puneri Siesta (1 PM – 4 PM):**\nIn Pune's traditional core (Tulshibaug, Laxmi Road, Narayan Peth), shops and small eateries close strictly from 1:00 PM to 4:00 PM for lunch and rest. We recommend spending this afternoon window visiting museums (Raja Dinkar Kelkar Museum, Aga Khan Palace) or relaxing in Japanese Garden!`;
-  }
-  if (lower.includes('artisan') || lower.includes('shop') || lower.includes('brass') || lower.includes('copper')) {
-    return `🛍️ **Support Local Pune Artisans:**\n• **Tambat Ali (Kasba Peth):** 350-year-old coppersmith guild hammering authentic beaten copper water pots and vessels.\n• **Tulshibaug:** Traditional Maharashtrian brassware, pearl naths, and bangles.\n• **Laxmi Road:** Handwoven pure silk Yeola Paithani sarees with peacock motifs.\n• **Murudkar Zendewale (Budhwar Peth):** Royal Maharashtrian Pheta & Puneri Pagadi makers since 1898!`;
-  }
-  if (lower.includes('fort') || lower.includes('sinhagad')) {
-    return `🏰 **Sinhagad Fort Trip Tips:**\n• Reach early between 6:30 AM and 8:00 AM to beat heat and traffic on the ghat road.\n• Must-eat atop fort: Fresh woodfire-cooked Pithla Bhakri with Thecha and chilled earthen Matka Dahi made by local village self-help groups!\n• Distance is ~30 km from Pune center; take a cab or PMT bus from Swargate.`;
-  }
-  return `Namaskar! Welcome to Pune! 🚩\nFeel free to explore our AI Itinerary Planner to generate custom routes, browse our Local Business directory to discover 350-year-old artisan workshops like Tambat Ali, or check the interactive map for live optimized routes across Pune!`;
+  // 3. Guaranteed instantaneous, rich, comprehensive Pune expert answer
+  return searchPuneKnowledgeBase(userQuestion);
 }
